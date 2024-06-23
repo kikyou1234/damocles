@@ -33,6 +33,7 @@ pub struct Sealing {
     /// specified sector sizes
     pub allowed_sizes: Option<Vec<String>>,
 
+    pub dc_addr : String,
     /// enable sealing sectors with deal pieces
     pub enable_deals: bool,
 
@@ -73,6 +74,7 @@ impl Default for Sealing {
             allowed_miners: None,
             allowed_sizes: None,
             enable_deals: false,
+            dc_addr: None,
             disable_cc: false,
             max_deals: None,
             min_deal_space: None,
@@ -95,6 +97,8 @@ pub struct SealingOptional {
 
     /// specified sector sizes
     pub allowed_sizes: Option<Vec<String>>,
+
+    pub dc_addr : String,
 
     /// enable sealing sectors with deal pieces
     pub enable_deals: Option<bool>,

@@ -1,0 +1,28 @@
+package market
+
+type PieceStorageInfos struct {
+	FsStorage []FsStorage
+	S3Storage []S3Storage
+}
+
+type FsStorage struct {
+	Path     string
+	Name     string
+	ReadOnly bool
+	Status   StorageStatus
+}
+
+type S3Storage struct {
+	Name     string
+	ReadOnly bool
+	EndPoint string
+	Bucket   string
+	SubDir   string
+	Status   StorageStatus
+}
+
+type StorageStatus struct {
+	Capacity  int64
+	Available int64
+	Reserved  int64
+}

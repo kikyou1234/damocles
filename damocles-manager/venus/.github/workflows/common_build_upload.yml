@@ -1,0 +1,277 @@
+name: reuse build and upload
+
+on:
+
+  workflow_call:
+    inputs:
+      bin_name:
+        type: string
+      has_ffi:
+        type: boolean
+    secrets:
+      OSS_KEY_ID:
+      OSS_KEY_SECRET:
+      OSS_ENDPOINT:
+      OSS_BUCKET:
+      FTP_HOST:
+        required: true
+      FTP_USER:
+        required: true
+      FTP_PWD:
+        required: true
+      GODEYE_URL:
+        required: true
+      token:
+        required: true
+
+jobs:
+
+  build-ubuntu:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+          fetch-depth: '0'
+
+      - name: vars
+        id: vars
+        run: |
+          export commit=$(git rev-parse HEAD)
+          export short=$(git rev-parse --short HEAD)
+          export github_tag=${{github.ref_name}}
+          export tag=$github_tag
+          export branch=$github_tag
+          export git_message=$(git rev-list --format=%s --max-count=1 HEAD | tail +2)
+          export repo_name=${GITHUB_REPOSITORY##*/}
+          export artifact_name=${{inputs.bin_name}}_$(git rev-parse --short HEAD).tar.gz
+          export pub_method=pushTest
+          export job_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          export oss_exists=0
+          export ftp_exists=0
+          export is_tag_create=false
+
+          export rx_tag='^refs\/tags\/.*'
+          if [[ "${{github.ref}}" =~ $rx_tag ]]; then
+            export is_tag_create=true
+            export pub_method=pushRelease
+          fi
+
+          if [[ "${{secrets.OSS_KEY_ID}}" != "" && \
+            "${{secrets.OSS_KEY_SECRET}}" != "" && \
+            "${{secrets.OSS_ENDPOINT}}" != "" && \
+            "${{secrets.OSS_BUCKET}}" != "" ]]; then
+            export oss_exists=1
+          fi
+          if [[ "${{secrets.FTP_HOST}}" != "" ]]; then
+            export ftp_exists=1
+          fi
+
+          echo "::set-output name=commit::$commit"
+          echo "::set-output name=short::$short"
+          echo "::set-output name=github_tag::$github_tag"
+          echo "::set-output name=git_message::$git_message"
+          echo "::set-output name=repo_name::$repo_name"
+          echo "::set-output name=branch::$branch"
+          echo "::set-output name=tag::$tag"
+          echo "::set-output name=artifact_name::$artifact_name"
+          echo "::set-output name=job_url::$job_url"
+          echo "::set-output name=pub_method::$pub_method"
+          echo "::set-output name=is_tag_create::$is_tag_create"
+          echo "::set-output name=oss_exists::$oss_exists"
+          echo "::set-output name=ftp_exists::$ftp_exists"
+
+      - name: show environment
+        run: |
+          echo bin_name = ${{inputs.bin_name}}
+          echo has_ffi = ${{inputs.has_ffi}}
+          echo event = ${{github.event_name}}
+          echo github_repository: $GITHUB_REPOSITORY
+          echo vars.commit = ${{steps.vars.outputs.commit}}
+          echo vars.short_commit = ${{steps.vars.outputs.short}}
+          echo vars.github_tag = ${{steps.vars.outputs.github_tag}}
+          echo vars.git_message = "${{steps.vars.outputs.git_message}}"
+          echo vars.repo_name =  ${{steps.vars.outputs.repo_name}}
+          echo vars.branch = ${{steps.vars.outputs.branch}}
+          echo vars.tag = ${{steps.vars.outputs.tag}}
+          echo vars.artifact_name = ${{steps.vars.outputs.artifact_name}}
+          echo vars.pub_method = ${{steps.vars.outputs.pub_method}}
+          echo secrets.godeye_url = ${{ secrets.GODEYE_URL }}
+          echo vars.oss_exists = ${{steps.vars.outputs.oss_exists}}
+          echo vars.ftp_exists = ${{steps.vars.outputs.ftp_exists}}
+          echo vars.is_tag_create = ${{steps.vars.outputs.is_tag_create}}
+          echo github.ref = ${{github.ref}}
+          echo github.ref_name = ${{github.ref_name}}
+          echo vars.job_url = ${{steps.vars.outputs.job_url}}
+          echo ftp_url = ftp://${{secrets.FTP_HOST}}/${{steps.vars.outputs.repo_name}}/${{steps.vars.outputs.artifact_name}}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: install deps
+        if: ${{ !inputs.has_ffi }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install ncftp
+
+      - name: install more deps
+        if: ${{ inputs.has_ffi }}
+        run: |
+          sudo apt-get update
+          sudo apt-get -o Acquire::Retries=3 install make ncftp mesa-opencl-icd ocl-icd-opencl-dev gcc git bzr jq pkg-config curl clang build-essential hwloc libhwloc-dev wget -y
+
+      - name: Build
+        run: |
+          go clean --modcache && make
+
+      - name: Tar Release
+        run: |
+          tar -zcvf ./${{steps.vars.outputs.artifact_name}} ./${{inputs.bin_name}}
+
+      - name: Rename bin file
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cp ./${{steps.vars.outputs.artifact_name}} ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_ubuntu.tar.gz
+
+      - name: shasum
+        if: startsWith(github.ref, 'refs/tags/')
+        run: shasum -a 256 ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_ubuntu.tar.gz > ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_ubuntu.sha256
+        shell: bash
+
+      - name: Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          files: |
+            ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_ubuntu.tar.gz
+            ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_ubuntu.sha256
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        if: ${{ steps.vars.outputs.pub_method == 'pushRelease' }}
+        with:
+          name: ${{steps.vars.outputs.artifact_name}}
+          path: ./${{steps.vars.outputs.artifact_name}}
+          if-no-files-found: error
+
+      - name: upload ftp
+        id: uploadftp
+        if: ${{ steps.vars.outputs.ftp_exists == '1' }}
+        continue-on-error: true
+        run: |
+          ncftpput -m -R -v -u ${{secrets.FTP_USER}} -p ${{secrets.FTP_PWD}} ${{secrets.FTP_HOST}} ./${{steps.vars.outputs.repo_name}} ./${{steps.vars.outputs.artifact_name}}
+          echo "upload file: ${{steps.vars.outputs.artifact_name}} successfully!"
+
+      - name: setup oss
+        id: setuposs
+        if: ${{ steps.vars.outputs.oss_exists == '1' && steps.uploadftp.outcome != 'success' && steps.vars.outputs.pub_method == 'pushTest' }}
+        uses: manyuanrong/setup-ossutil@master
+        with:
+          endpoint: ${{secrets.OSS_ENDPOINT}}
+          access-key-id: ${{ secrets.OSS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_KEY_SECRET }}
+
+      - name: cp files to aliyun
+        id: cposs
+        if: ${{ steps.setuposs.outcome == 'success' }}
+        run: |
+          ossutil cp ./${{steps.vars.outputs.artifact_name}} ${{secrets.OSS_BUCKET}}
+          export signed_url=`ossutil sign ${{secrets.OSS_BUCKET}}/${{steps.vars.outputs.artifact_name}} --timeout 31104000 | sed -n 1p`
+          echo '::set-output name=oss_signed_url::$(signed_url)'
+
+      - name: push god-eye
+        run: |
+          export link=${{steps.vars.outputs.job_url}}
+          if [[ "${{ steps.uploadftp.outcome }}" == "success" ]]; then
+            export link=ftp://${{secrets.FTP_HOST}}/${{steps.vars.outputs.repo_name}}/${{steps.vars.outputs.artifact_name}}
+          elif [[ "${{ steps.release.outcome }}" == "success" ]]; then
+            export link=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/${{steps.vars.outputs.github_tag}}/${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_ubuntu.tar.gz
+          elif [[ "${{ steps.cposs.outcome }}" == "success" ]]; then
+            export link=${{steps.cposs.outputs.oss_signed_url}}
+          fi
+          echo download target file : $link
+          set +e
+          curl --max-time 20 -X PUT ${{secrets.GODEYE_URL}}/${{steps.vars.outputs.pub_method}} \
+                  --data-urlencode "type=1" \
+                  --data-urlencode "commitId=${{steps.vars.outputs.commit}}" \
+                  --data-urlencode "branch=${{steps.vars.outputs.branch}}" \
+                  --data-urlencode "programName=${{steps.vars.outputs.repo_name}}" \
+                  --data-urlencode "link=$link" \
+                  --data-urlencode "description=message:${{steps.vars.outputs.git_message}}, branch:${{steps.vars.outputs.branch}}, commit:${{steps.vars.outputs.short}}, tag:${{steps.vars.outputs.github_tag}}" \
+                  --data-urlencode "version=${{steps.vars.outputs.short}}"
+          set -e
+
+  build-macos:
+    runs-on: macos-11
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+          fetch-depth: '0'
+
+      - name: vars
+        id: vars
+        run: |
+          export tag=${{github.ref_name}}
+          export repo_name=${GITHUB_REPOSITORY##*/}
+          export artifact_name=${{inputs.bin_name}}_$(git rev-parse --short HEAD).tar.gz
+
+          echo "::set-output name=repo_name::$repo_name"
+          echo "::set-output name=tag::$tag"
+          echo "::set-output name=artifact_name::$artifact_name"
+
+      - name: show environment
+        run: |
+          echo bin_name = ${{inputs.bin_name}}
+          echo has_ffi = ${{inputs.has_ffi}}
+          echo vars.repo_name = ${{steps.vars.outputs.repo_name}}
+          echo vars.tag = ${{steps.vars.outputs.tag}}
+          echo vars.artifact_name = ${{steps.vars.outputs.artifact_name}}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: install more deps
+        if: ${{ inputs.has_ffi }}
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          brew install jq pkg-config hwloc
+          cargo install cargo-lipo
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          make
+
+      - name: Tar Release
+        run: |
+          tar -zcvf ./${{steps.vars.outputs.artifact_name}} ./${{inputs.bin_name}}
+
+      - name: Rename bin file
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cp ./${{steps.vars.outputs.artifact_name}} ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_macos.tar.gz
+
+      - name: shasum
+        if: startsWith(github.ref, 'refs/tags/')
+        run: shasum -a 256 ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_macos.tar.gz > ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_macos.sha256
+        shell: bash
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        with:
+          files: |
+            ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_macos.tar.gz
+            ./${{inputs.bin_name}}_${{steps.vars.outputs.tag}}_macos.sha256

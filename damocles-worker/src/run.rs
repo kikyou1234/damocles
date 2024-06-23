@@ -148,11 +148,13 @@ pub fn start_daemon(cfg_path: impl AsRef<Path>) -> Result<()> {
     let dest = format!("{}:{}", local_ip, cfg.worker_server_listen_port());
     info!(?instance, ?dest, "worker info inited");
 
+    let dc_addr = cfg.sealing.dc_addr.as_str();
+
     let rpc_origin = Url::parse(&dial_addr)
         .map(|u| u.origin().ascii_serialization())
         .context("parse rpc url origin")?;
 
-    let remote_piece_store = RemotePieceStore::new(&rpc_origin)
+    let remote_piece_store = RemotePieceStore::new(&dc_addr)
         .context("build proxy piece store")?;
     let piece_store: Arc<dyn PieceStore> =
         if cfg.sealing.enable_deals.unwrap_or(false) {

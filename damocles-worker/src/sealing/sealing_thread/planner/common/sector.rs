@@ -271,6 +271,8 @@ impl Sector {
                     piece_cid: deal.piece.cid.clone(),
                     payload_size: deal.payload_size,
                     is_pledge: deal.id == 0,
+                    dc_url : deal.dc_url,
+                    
                 })
                 .collect();
         }
@@ -286,6 +288,7 @@ impl Sector {
                     } else {
                         piece.deal_info.allocation_id == 0
                     },
+                    dc_url : piece.deal_info.dc_url,
                 })
                 .collect();
         }
@@ -307,4 +310,5 @@ pub struct SectorPiece {
     pub piece_cid: CidJson,
     pub payload_size: u64,
     pub is_pledge: bool,
+    pub dc_url : String,
 }

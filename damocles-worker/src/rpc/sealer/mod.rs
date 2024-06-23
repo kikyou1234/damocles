@@ -83,6 +83,8 @@ pub struct DealInfo {
 
     /// piece data info
     pub piece: PieceInfo,
+    #[serde(rename = "DcUrl")]
+    pub dc_url: String
 }
 
 /// sector piece info
@@ -105,6 +107,8 @@ pub struct DealInfoV2 {
     pub allocation_id: u64,
     pub payload_size: u64,
     pub is_builtin_market: bool,
+    #[serde(rename = "DcUrl")]
+    pub dc_url :String,
 }
 
 /// Piece information for part or a whole file.

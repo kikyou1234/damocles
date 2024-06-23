@@ -74,8 +74,8 @@ pub(crate) fn add_pieces(
             PieceFile::Pledge
         } else {
             piece_store
-                .get(&deal.piece_cid.0)
-                .with_context(|| format!("get piece: {}", deal.piece_cid.0))
+                .get(&deal.dc_url)
+                .with_context(|| format!("get piece: {}", deal.dcurl))
                 .perm()?
         };
         pieces.push(Piece {
